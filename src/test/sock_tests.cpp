@@ -1,12 +1,12 @@
-// Copyright (c) 2021-2021 The Bitcoin Core developers
+// Copyright (c) 2021-2022 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <compat.h>
+#include <common/system.h>
+#include <compat/compat.h>
 #include <test/util/setup_common.h>
-#include <threadinterrupt.h>
 #include <util/sock.h>
-#include <util/system.h>
+#include <util/threadinterrupt.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -24,7 +24,7 @@ static bool SocketIsClosed(const SOCKET& s)
     // wrongly pretend that the socket is not closed.
     int type;
     socklen_t len = sizeof(type);
-    return getsockopt(s, SOL_SOCKET, SO_TYPE, (sockopt_arg_type)&type, &len) == SOCKET_ERROR;
+    return getsockopt(s, SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&type), &len) == SOCKET_ERROR;
 }
 
 static SOCKET CreateSocket()
@@ -38,7 +38,7 @@ BOOST_AUTO_TEST_CASE(constructor_and_destructor)
 {
     const SOCKET s = CreateSocket();
     Sock* sock = new Sock(s);
-    BOOST_CHECK_EQUAL(sock->Get(), s);
+    BOOST_CHECK(*sock == s);
     BOOST_CHECK(!SocketIsClosed(s));
     delete sock;
     BOOST_CHECK(SocketIsClosed(s));
@@ -51,40 +51,34 @@ BOOST_AUTO_TEST_CASE(move_constructor)
     Sock* sock2 = new Sock(std::move(*sock1));
     delete sock1;
     BOOST_CHECK(!SocketIsClosed(s));
-    BOOST_CHECK_EQUAL(sock2->Get(), s);
+    BOOST_CHECK(*sock2 == s);
     delete sock2;
     BOOST_CHECK(SocketIsClosed(s));
 }
 
 BOOST_AUTO_TEST_CASE(move_assignment)
 {
-    const SOCKET s = CreateSocket();
-    Sock* sock1 = new Sock(s);
-    Sock* sock2 = new Sock();
+    const SOCKET s1 = CreateSocket();
+    const SOCKET s2 = CreateSocket();
+    Sock* sock1 = new Sock(s1);
+    Sock* sock2 = new Sock(s2);
+
+    BOOST_CHECK(!SocketIsClosed(s1));
+    BOOST_CHECK(!SocketIsClosed(s2));
+
     *sock2 = std::move(*sock1);
+    BOOST_CHECK(!SocketIsClosed(s1));
+    BOOST_CHECK(SocketIsClosed(s2));
+    BOOST_CHECK(*sock2 == s1);
+
     delete sock1;
-    BOOST_CHECK(!SocketIsClosed(s));
-    BOOST_CHECK_EQUAL(sock2->Get(), s);
+    BOOST_CHECK(!SocketIsClosed(s1));
+    BOOST_CHECK(SocketIsClosed(s2));
+    BOOST_CHECK(*sock2 == s1);
+
     delete sock2;
-    BOOST_CHECK(SocketIsClosed(s));
-}
-
-BOOST_AUTO_TEST_CASE(release)
-{
-    SOCKET s = CreateSocket();
-    Sock* sock = new Sock(s);
-    BOOST_CHECK_EQUAL(sock->Release(), s);
-    delete sock;
-    BOOST_CHECK(!SocketIsClosed(s));
-    BOOST_REQUIRE(CloseSocket(s));
-}
-
-BOOST_AUTO_TEST_CASE(reset)
-{
-    const SOCKET s = CreateSocket();
-    Sock sock(s);
-    sock.Reset();
-    BOOST_CHECK(SocketIsClosed(s));
+    BOOST_CHECK(SocketIsClosed(s1));
+    BOOST_CHECK(SocketIsClosed(s2));
 }
 
 #ifndef WIN32 // Windows does not have socketpair(2).
@@ -116,7 +110,7 @@ BOOST_AUTO_TEST_CASE(send_and_receive)
     SendAndRecvMessage(*sock0, *sock1);
 
     Sock* sock0moved = new Sock(std::move(*sock0));
-    Sock* sock1moved = new Sock();
+    Sock* sock1moved = new Sock(INVALID_SOCKET);
     *sock1moved = std::move(*sock1);
 
     delete sock0;
@@ -139,7 +133,7 @@ BOOST_AUTO_TEST_CASE(wait)
     Sock sock0(s[0]);
     Sock sock1(s[1]);
 
-    std::thread waiter([&sock0]() { sock0.Wait(24h, Sock::RECV); });
+    std::thread waiter([&sock0]() { (void)sock0.Wait(24h, Sock::RECV); });
 
     BOOST_REQUIRE_EQUAL(sock1.Send("a", 1, 0), 1);
 
@@ -162,7 +156,7 @@ BOOST_AUTO_TEST_CASE(recv_until_terminator_limit)
         // BOOST_CHECK_EXCEPTION() writes to some variables shared with the main thread which
         // creates a data race. So mimic it manually.
         try {
-            sock_recv.RecvUntilTerminator('\n', timeout, interrupt, max_data);
+            (void)sock_recv.RecvUntilTerminator('\n', timeout, interrupt, max_data);
         } catch (const std::runtime_error& e) {
             threw_as_expected = HasReason("too many bytes without a terminator")(e);
         }

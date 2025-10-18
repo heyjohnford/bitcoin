@@ -6,24 +6,20 @@ https://bitcoincore.org
 For an immediately usable, binary version of the Bitcoin Core software, see
 https://bitcoincore.org/en/download/.
 
+What is Bitcoin Core?
+---------------------
+
+Bitcoin Core connects to the Bitcoin peer-to-peer network to download and fully
+validate blocks and transactions. It also includes a wallet and graphical user
+interface, which can be optionally built.
+
 Further information about Bitcoin Core is available in the [doc folder](/doc).
-
-What is Bitcoin?
-----------------
-
-Bitcoin is an experimental digital currency that enables instant payments to
-anyone, anywhere in the world. Bitcoin uses peer-to-peer technology to operate
-with no central authority: managing transactions and issuing money are carried
-out collectively by the network. Bitcoin Core is the name of open source
-software which enables the use of this currency.
-
-For more information read the original Bitcoin whitepaper.
 
 License
 -------
 
 Bitcoin Core is released under the terms of the MIT license. See [COPYING](COPYING) for more
-information or see https://opensource.org/licenses/MIT.
+information or see https://opensource.org/license/MIT.
 
 Development Process
 -------------------
@@ -52,15 +48,16 @@ lots of money.
 
 Developers are strongly encouraged to write [unit tests](src/test/README.md) for new code, and to
 submit new unit tests for old code. Unit tests can be compiled and run
-(assuming they weren't disabled in configure) with: `make check`. Further details on running
+(assuming they weren't disabled during the generation of the build system) with: `ctest`. Further details on running
 and extending unit tests can be found in [/src/test/README.md](/src/test/README.md).
 
 There are also [regression and integration tests](/test), written
 in Python.
-These tests can be run (if the [test dependencies](/test) are installed) with: `test/functional/test_runner.py`
+These tests can be run (if the [test dependencies](/test) are installed) with: `build/test/functional/test_runner.py`
+(assuming `build` is your build directory).
 
-The CI (Continuous Integration) systems make sure that every pull request is built for Windows, Linux, and macOS,
-and that unit/sanity tests are run automatically.
+The CI (Continuous Integration) systems make sure that every pull request is tested on Windows, Linux, and macOS.
+The CI must pass on all commits before merge to avoid unrelated CI failures on new pull requests.
 
 ### Manual Quality Assurance (QA) Testing
 
@@ -73,7 +70,7 @@ Translations
 ------------
 
 Changes to translations as well as new translations can be submitted to
-[Bitcoin Core's Transifex page](https://www.transifex.com/bitcoin/bitcoin/).
+[Bitcoin Core's Transifex page](https://explore.transifex.com/bitcoin/bitcoin/).
 
 Translations are periodically pulled from Transifex and merged into the git repository. See the
 [translation process](doc/translation_process.md) for details on how this works.

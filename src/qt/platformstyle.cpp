@@ -1,4 +1,4 @@
-// Copyright (c) 2015-2019 The Bitcoin Core developers
+// Copyright (c) 2015-2021 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -71,25 +71,28 @@ PlatformStyle::PlatformStyle(const QString &_name, bool _imagesOnButtons, bool _
     name(_name),
     imagesOnButtons(_imagesOnButtons),
     colorizeIcons(_colorizeIcons),
-    useExtraSpacing(_useExtraSpacing),
-    singleColor(0,0,0),
-    textColor(0,0,0)
+    useExtraSpacing(_useExtraSpacing)
 {
-    // Determine icon highlighting color
+}
+
+QColor PlatformStyle::TextColor() const
+{
+    return QApplication::palette().color(QPalette::WindowText);
+}
+
+QColor PlatformStyle::SingleColor() const
+{
     if (colorizeIcons) {
-        const QColor colorHighlightBg(QApplication::palette().color(QPalette::Highlight));
-        const QColor colorHighlightFg(QApplication::palette().color(QPalette::HighlightedText));
+        QColor colorHighlightBg(QApplication::palette().color(QPalette::Highlight));
+        QColor colorHighlightFg(QApplication::palette().color(QPalette::HighlightedText));
         const QColor colorText(QApplication::palette().color(QPalette::WindowText));
         const int colorTextLightness = colorText.lightness();
-        QColor colorbase;
-        if (abs(colorHighlightBg.lightness() - colorTextLightness) < abs(colorHighlightFg.lightness() - colorTextLightness))
-            colorbase = colorHighlightBg;
-        else
-            colorbase = colorHighlightFg;
-        singleColor = colorbase;
+        if (abs(colorHighlightBg.lightness() - colorTextLightness) < abs(colorHighlightFg.lightness() - colorTextLightness)) {
+            return colorHighlightBg;
+        }
+        return colorHighlightFg;
     }
-    // Determine text color
-    textColor = QColor(QApplication::palette().color(QPalette::WindowText));
+    return {0, 0, 0};
 }
 
 QImage PlatformStyle::SingleColorImage(const QString& filename) const

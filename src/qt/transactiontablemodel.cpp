@@ -1,10 +1,11 @@
-// Copyright (c) 2011-2020 The Bitcoin Core developers
+// Copyright (c) 2011-2022 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <qt/transactiontablemodel.h>
 
 #include <qt/addresstablemodel.h>
+#include <qt/bitcoinunits.h>
 #include <qt/clientmodel.h>
 #include <qt/guiconstants.h>
 #include <qt/guiutil.h>
@@ -16,6 +17,7 @@
 
 #include <core_io.h>
 #include <interfaces/handler.h>
+#include <tinyformat.h>
 #include <uint256.h>
 
 #include <algorithm>
@@ -25,16 +27,17 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QIcon>
+#include <QLatin1Char>
+#include <QLatin1String>
 #include <QList>
 
 
 // Amount column is right-aligned it contains numbers
 static int column_alignments[] = {
-        Qt::AlignLeft|Qt::AlignVCenter, /* status */
-        Qt::AlignLeft|Qt::AlignVCenter, /* watchonly */
-        Qt::AlignLeft|Qt::AlignVCenter, /* date */
-        Qt::AlignLeft|Qt::AlignVCenter, /* type */
-        Qt::AlignLeft|Qt::AlignVCenter, /* address */
+        Qt::AlignLeft|Qt::AlignVCenter, /*status=*/
+        Qt::AlignLeft|Qt::AlignVCenter, /*date=*/
+        Qt::AlignLeft|Qt::AlignVCenter, /*type=*/
+        Qt::AlignLeft|Qt::AlignVCenter, /*address=*/
         Qt::AlignRight|Qt::AlignVCenter /* amount */
     };
 
@@ -45,11 +48,11 @@ struct TxLessThan
     {
         return a.hash < b.hash;
     }
-    bool operator()(const TransactionRecord &a, const uint256 &b) const
+    bool operator()(const TransactionRecord &a, const Txid &b) const
     {
         return a.hash < b;
     }
-    bool operator()(const uint256 &a, const TransactionRecord &b) const
+    bool operator()(const Txid &a, const TransactionRecord &b) const
     {
         return a < b.hash;
     }
@@ -59,8 +62,8 @@ struct TxLessThan
 struct TransactionNotification
 {
 public:
-    TransactionNotification() {}
-    TransactionNotification(uint256 _hash, ChangeType _status, bool _showTransaction):
+    TransactionNotification() = default;
+    TransactionNotification(Txid _hash, ChangeType _status, bool _showTransaction):
         hash(_hash), status(_status), showTransaction(_showTransaction) {}
 
     void invoke(QObject *ttm)
@@ -74,7 +77,7 @@ public:
         assert(invoked);
     }
 private:
-    uint256 hash;
+    Txid hash;
     ChangeType status;
     bool showTransaction;
 };
@@ -90,24 +93,23 @@ public:
 
     TransactionTableModel *parent;
 
-    /* Local cache of wallet.
-     * As it is in the same order as the CWallet, by definition
-     * this is sorted by sha256.
-     */
+    //! Local cache of wallet sorted by transaction hash
     QList<TransactionRecord> cachedWallet;
 
-    bool fQueueNotifications = false;
+    /** True when model finishes loading all wallet transactions on start */
+    bool m_loaded = false;
+    /** True when transactions are being notified, for instance when scanning */
+    bool m_loading = false;
     std::vector< TransactionNotification > vQueueNotifications;
 
-    void NotifyTransactionChanged(const uint256 &hash, ChangeType status);
-    void ShowProgress(const std::string &title, int nProgress);
+    void NotifyTransactionChanged(const Txid& hash, ChangeType status);
+    void DispatchNotifications();
 
     /* Query entire wallet anew from core.
      */
     void refreshWallet(interfaces::Wallet& wallet)
     {
-        qDebug() << "TransactionTablePriv::refreshWallet";
-        cachedWallet.clear();
+        assert(!m_loaded);
         {
             for (const auto& wtx : wallet.getWalletTxs()) {
                 if (TransactionRecord::showTransaction()) {
@@ -115,6 +117,8 @@ public:
                 }
             }
         }
+        m_loaded = true;
+        DispatchNotifications();
     }
 
     /* Update our model of the wallet incrementally, to synchronize our model of the wallet
@@ -122,7 +126,7 @@ public:
 
        Call with transaction that was added, removed or changed.
      */
-    void updateWallet(interfaces::Wallet& wallet, const uint256 &hash, int status, bool showTransaction)
+    void updateWallet(interfaces::Wallet& wallet, const Txid& hash, int status, bool showTransaction)
     {
         qDebug() << "TransactionTablePriv::updateWallet: " + QString::fromStdString(hash.ToString()) + " " + QString::number(status);
 
@@ -214,7 +218,7 @@ public:
 
             // If a status update is needed (blocks came in since last check),
             // try to update the status of this transaction from the wallet.
-            // Otherwise, simply re-use the cached status.
+            // Otherwise, simply reuse the cached status.
             interfaces::WalletTxStatus wtx;
             int numBlocks;
             int64_t block_time;
@@ -226,7 +230,7 @@ public:
         return nullptr;
     }
 
-    QString describe(interfaces::Node& node, interfaces::Wallet& wallet, TransactionRecord *rec, int unit)
+    QString describe(interfaces::Node& node, interfaces::Wallet& wallet, TransactionRecord* rec, BitcoinUnit unit)
     {
         return TransactionDesc::toHTML(node, wallet, rec, unit);
     }
@@ -246,15 +250,14 @@ TransactionTableModel::TransactionTableModel(const PlatformStyle *_platformStyle
         QAbstractTableModel(parent),
         walletModel(parent),
         priv(new TransactionTablePriv(this)),
-        fProcessingQueuedTransactions(false),
         platformStyle(_platformStyle)
 {
-    columns << QString() << QString() << tr("Date") << tr("Type") << tr("Label") << BitcoinUnits::getAmountColumnTitle(walletModel->getOptionsModel()->getDisplayUnit());
+    subscribeToCoreSignals();
+
+    columns << QString() << tr("Date") << tr("Type") << tr("Label") << BitcoinUnits::getAmountColumnTitle(walletModel->getOptionsModel()->getDisplayUnit());
     priv->refreshWallet(walletModel->wallet());
 
     connect(walletModel->getOptionsModel(), &OptionsModel::displayUnitChanged, this, &TransactionTableModel::updateDisplayUnit);
-
-    subscribeToCoreSignals();
 }
 
 TransactionTableModel::~TransactionTableModel()
@@ -272,8 +275,7 @@ void TransactionTableModel::updateAmountColumnTitle()
 
 void TransactionTableModel::updateTransaction(const QString &hash, int status, bool showTransaction)
 {
-    uint256 updated;
-    updated.SetHex(hash.toStdString());
+    Txid updated = Txid::FromHex(hash.toStdString()).value();
 
     priv->updateWallet(walletModel->wallet(), updated, status, showTransaction);
 }
@@ -310,12 +312,6 @@ QString TransactionTableModel::formatTxStatus(const TransactionRecord *wtx) cons
 
     switch(wtx->status.status)
     {
-    case TransactionStatus::OpenUntilBlock:
-        status = tr("Open for %n more block(s)","",wtx->status.open_for);
-        break;
-    case TransactionStatus::OpenUntilDate:
-        status = tr("Open until %1").arg(GUIUtil::dateTimeStr(wtx->status.open_for));
-        break;
     case TransactionStatus::Unconfirmed:
         status = tr("Unconfirmed");
         break;
@@ -380,8 +376,6 @@ QString TransactionTableModel::formatTxType(const TransactionRecord *wtx) const
     case TransactionRecord::SendToAddress:
     case TransactionRecord::SendToOther:
         return tr("Sent to");
-    case TransactionRecord::SendToSelf:
-        return tr("Payment to yourself");
     case TransactionRecord::Generated:
         return tr("Mined");
     default:
@@ -408,26 +402,18 @@ QVariant TransactionTableModel::txAddressDecoration(const TransactionRecord *wtx
 
 QString TransactionTableModel::formatTxToAddress(const TransactionRecord *wtx, bool tooltip) const
 {
-    QString watchAddress;
-    if (tooltip) {
-        // Mark transactions involving watch-only addresses by adding " (watch-only)"
-        watchAddress = wtx->involvesWatchAddress ? QString(" (") + tr("watch-only") + QString(")") : "";
-    }
-
     switch(wtx->type)
     {
     case TransactionRecord::RecvFromOther:
-        return QString::fromStdString(wtx->address) + watchAddress;
+        return QString::fromStdString(wtx->address);
     case TransactionRecord::RecvWithAddress:
     case TransactionRecord::SendToAddress:
     case TransactionRecord::Generated:
-        return lookupAddress(wtx->address, tooltip) + watchAddress;
+        return lookupAddress(wtx->address, tooltip);
     case TransactionRecord::SendToOther:
-        return QString::fromStdString(wtx->address) + watchAddress;
-    case TransactionRecord::SendToSelf:
-        return lookupAddress(wtx->address, tooltip) + watchAddress;
+        return QString::fromStdString(wtx->address);
     default:
-        return tr("(n/a)") + watchAddress;
+        return tr("(n/a)");
     }
 }
 
@@ -444,8 +430,6 @@ QVariant TransactionTableModel::addressColor(const TransactionRecord *wtx) const
         if(label.isEmpty())
             return COLOR_BAREADDRESS;
         } break;
-    case TransactionRecord::SendToSelf:
-        return COLOR_BAREADDRESS;
     default:
         break;
     }
@@ -469,9 +453,6 @@ QVariant TransactionTableModel::txStatusDecoration(const TransactionRecord *wtx)
 {
     switch(wtx->status.status)
     {
-    case TransactionStatus::OpenUntilBlock:
-    case TransactionStatus::OpenUntilDate:
-        return COLOR_TX_STATUS_OPENUNTILDATE;
     case TransactionStatus::Unconfirmed:
         return QIcon(":/icons/transaction_0");
     case TransactionStatus::Abandoned:
@@ -501,14 +482,6 @@ QVariant TransactionTableModel::txStatusDecoration(const TransactionRecord *wtx)
     }
 }
 
-QVariant TransactionTableModel::txWatchonlyDecoration(const TransactionRecord *wtx) const
-{
-    if (wtx->involvesWatchAddress)
-        return QIcon(":/icons/eye");
-    else
-        return QVariant();
-}
-
 QString TransactionTableModel::formatTooltip(const TransactionRecord *rec) const
 {
     QString tooltip = formatTxStatus(rec) + QString("\n") + formatTxType(rec);
@@ -532,8 +505,6 @@ QVariant TransactionTableModel::data(const QModelIndex &index, int role) const
         switch (column) {
         case Status:
             return txStatusDecoration(rec);
-        case Watchonly:
-            return txWatchonlyDecoration(rec);
         case Date: return {};
         case Type: return {};
         case ToAddress:
@@ -549,7 +520,6 @@ QVariant TransactionTableModel::data(const QModelIndex &index, int role) const
     case Qt::DisplayRole:
         switch (column) {
         case Status: return {};
-        case Watchonly: return {};
         case Date:
             return formatTxDate(rec);
         case Type:
@@ -566,11 +536,9 @@ QVariant TransactionTableModel::data(const QModelIndex &index, int role) const
         case Status:
             return QString::fromStdString(rec->status.sortKey);
         case Date:
-            return rec->time;
+            return QString::fromStdString(strprintf("%020s-%s", rec->time, rec->status.sortKey));
         case Type:
             return formatTxType(rec);
-        case Watchonly:
-            return (rec->involvesWatchAddress ? 1 : 0);
         case ToAddress:
             return formatTxToAddress(rec, true);
         case Amount:
@@ -604,11 +572,7 @@ QVariant TransactionTableModel::data(const QModelIndex &index, int role) const
     case TypeRole:
         return rec->type;
     case DateRole:
-        return QDateTime::fromTime_t(static_cast<uint>(rec->time));
-    case WatchonlyRole:
-        return rec->involvesWatchAddress;
-    case WatchonlyDecorationRole:
-        return txWatchonlyDecoration(rec);
+        return QDateTime::fromSecsSinceEpoch(rec->time);
     case LongDescriptionRole:
         return priv->describe(walletModel->node(), walletModel->wallet(), rec, walletModel->getOptionsModel()->getDisplayUnit());
     case AddressRole:
@@ -624,7 +588,7 @@ QVariant TransactionTableModel::data(const QModelIndex &index, int role) const
     case TxPlainTextRole:
         {
             QString details;
-            QDateTime date = QDateTime::fromTime_t(static_cast<uint>(rec->time));
+            QDateTime date = QDateTime::fromSecsSinceEpoch(rec->time);
             QString txLabel = walletModel->getAddressTableModel()->labelForAddress(QString::fromStdString(rec->address));
 
             details.append(date.toString("M/d/yy HH:mm"));
@@ -681,8 +645,6 @@ QVariant TransactionTableModel::headerData(int section, Qt::Orientation orientat
                 return tr("Date and time that the transaction was received.");
             case Type:
                 return tr("Type of transaction.");
-            case Watchonly:
-                return tr("Whether or not a watch-only address is involved in this transaction.");
             case ToAddress:
                 return tr("User-defined intent/purpose of the transaction.");
             case Amount:
@@ -711,7 +673,7 @@ void TransactionTableModel::updateDisplayUnit()
     Q_EMIT dataChanged(index(0, Amount), index(priv->size()-1, Amount));
 }
 
-void TransactionTablePriv::NotifyTransactionChanged(const uint256 &hash, ChangeType status)
+void TransactionTablePriv::NotifyTransactionChanged(const Txid& hash, ChangeType status)
 {
     // Find transaction in wallet
     // Determine whether to show transaction or not (determine this here so that no relocking is needed in GUI thread)
@@ -719,7 +681,7 @@ void TransactionTablePriv::NotifyTransactionChanged(const uint256 &hash, ChangeT
 
     TransactionNotification notification(hash, status, showTransaction);
 
-    if (fQueueNotifications)
+    if (!m_loaded || m_loading)
     {
         vQueueNotifications.push_back(notification);
         return;
@@ -727,36 +689,34 @@ void TransactionTablePriv::NotifyTransactionChanged(const uint256 &hash, ChangeT
     notification.invoke(parent);
 }
 
-void TransactionTablePriv::ShowProgress(const std::string &title, int nProgress)
+void TransactionTablePriv::DispatchNotifications()
 {
-    if (nProgress == 0)
-        fQueueNotifications = true;
+    if (!m_loaded || m_loading) return;
 
-    if (nProgress == 100)
+    if (vQueueNotifications.size() > 10) { // prevent balloon spam, show maximum 10 balloons
+        bool invoked = QMetaObject::invokeMethod(parent, "setProcessingQueuedTransactions", Qt::QueuedConnection, Q_ARG(bool, true));
+        assert(invoked);
+    }
+    for (unsigned int i = 0; i < vQueueNotifications.size(); ++i)
     {
-        fQueueNotifications = false;
-        if (vQueueNotifications.size() > 10) { // prevent balloon spam, show maximum 10 balloons
-            bool invoked = QMetaObject::invokeMethod(parent, "setProcessingQueuedTransactions", Qt::QueuedConnection, Q_ARG(bool, true));
+        if (vQueueNotifications.size() - i <= 10) {
+            bool invoked = QMetaObject::invokeMethod(parent, "setProcessingQueuedTransactions", Qt::QueuedConnection, Q_ARG(bool, false));
             assert(invoked);
         }
-        for (unsigned int i = 0; i < vQueueNotifications.size(); ++i)
-        {
-            if (vQueueNotifications.size() - i <= 10) {
-                bool invoked = QMetaObject::invokeMethod(parent, "setProcessingQueuedTransactions", Qt::QueuedConnection, Q_ARG(bool, false));
-                assert(invoked);
-            }
 
-            vQueueNotifications[i].invoke(parent);
-        }
-        vQueueNotifications.clear();
+        vQueueNotifications[i].invoke(parent);
     }
+    vQueueNotifications.clear();
 }
 
 void TransactionTableModel::subscribeToCoreSignals()
 {
     // Connect signals to wallet
     m_handler_transaction_changed = walletModel->wallet().handleTransactionChanged(std::bind(&TransactionTablePriv::NotifyTransactionChanged, priv, std::placeholders::_1, std::placeholders::_2));
-    m_handler_show_progress = walletModel->wallet().handleShowProgress(std::bind(&TransactionTablePriv::ShowProgress, priv, std::placeholders::_1, std::placeholders::_2));
+    m_handler_show_progress = walletModel->wallet().handleShowProgress([this](const std::string&, int progress) {
+        priv->m_loading = progress < 100;
+        priv->DispatchNotifications();
+    });
 }
 
 void TransactionTableModel::unsubscribeFromCoreSignals()

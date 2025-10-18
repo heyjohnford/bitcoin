@@ -1,15 +1,15 @@
-// Copyright (c) 2011-2020 The Bitcoin Core developers
+// Copyright (c) 2011-2022 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #ifndef BITCOIN_QT_GUIUTIL_H
 #define BITCOIN_QT_GUIUTIL_H
 
-#include <amount.h>
-#include <fs.h>
+#include <consensus/amount.h>
 #include <net.h>
 #include <netaddress.h>
 #include <util/check.h>
+#include <util/fs.h>
 
 #include <QApplication>
 #include <QEvent>
@@ -27,6 +27,7 @@
 #include <chrono>
 #include <utility>
 
+class PlatformStyle;
 class QValidatedLineEdit;
 class SendCoinsRecipient;
 
@@ -36,10 +37,13 @@ namespace interfaces
 }
 
 QT_BEGIN_NAMESPACE
+class QAbstractButton;
 class QAbstractItemView;
 class QAction;
 class QDateTime;
+class QDialog;
 class QFont;
+class QKeySequence;
 class QLineEdit;
 class QMenu;
 class QPoint;
@@ -64,6 +68,14 @@ namespace GUIUtil
 
     // Set up widget for address
     void setupAddressWidget(QValidatedLineEdit *widget, QWidget *parent);
+
+    /**
+     * Connects an additional shortcut to a QAbstractButton. Works around the
+     * one shortcut limitation of the button's shortcut property.
+     * @param[in] button    QAbstractButton to assign shortcut to
+     * @param[in] shortcut  QKeySequence to use as shortcut
+     */
+    void AddButtonShortcut(QAbstractButton* button, const QKeySequence& shortcut);
 
     // Parse "bitcoin:" URI into recipient object, return true on successful parsing
     bool parseBitcoinURI(const QUrl &uri, SendCoinsRecipient *out);
@@ -102,9 +114,22 @@ namespace GUIUtil
     void setClipboard(const QString& str);
 
     /**
+     * Loads the font from the file specified by file_name, aborts if it fails.
+     */
+    void LoadFont(const QString& file_name);
+
+    /**
      * Determine default data directory for operating system.
      */
     QString getDefaultDataDirectory();
+
+    /**
+     * Extract first suffix from filter pattern "Description (*.foo)" or "Description (*.foo *.bar ...).
+     *
+     * @param[in] filter Filter specification such as "Comma Separated Files (*.csv)"
+     * @return QString
+     */
+    QString ExtractFirstSuffixFromFilter(const QString& filter);
 
     /** Get save filename, mimics QFileDialog::getSaveFileName, except that it appends a default suffix
         when no suffix is provided by the user.
@@ -192,10 +217,10 @@ namespace GUIUtil
     bool SetStartOnSystemStartup(bool fAutoStart);
 
     /** Convert QString to OS specific boost path through UTF-8 */
-    fs::path qstringToBoostPath(const QString &path);
+    fs::path QStringToPath(const QString &path);
 
     /** Convert OS specific boost path to QString through UTF-8 */
-    QString boostPathToQString(const fs::path &path);
+    QString PathToQString(const fs::path &path);
 
     /** Convert enum Network to QString */
     QString NetworkToQString(Network net);
@@ -204,7 +229,10 @@ namespace GUIUtil
     QString ConnectionTypeToQString(ConnectionType conn_type, bool prepend_direction);
 
     /** Convert seconds into a QString with days, hours, mins, secs */
-    QString formatDurationStr(int secs);
+    QString formatDurationStr(std::chrono::seconds dur);
+
+    /** Convert peer connection time to a QString denominated in the most relevant unit. */
+    QString FormatPeerAge(std::chrono::seconds time_connected);
 
     /** Format CNodeStats.nServices bitmask into a user-readable string */
     QString formatServicesStr(quint64 mask);
@@ -212,8 +240,8 @@ namespace GUIUtil
     /** Format a CNodeStats.m_last_ping_time into a user-readable string or display N/A, if 0 */
     QString formatPingTime(std::chrono::microseconds ping_time);
 
-    /** Format a CNodeCombinedStats.nTimeOffset into a user-readable string */
-    QString formatTimeOffset(int64_t nTimeOffset);
+    /** Format a CNodeStateStats.time_offset into a user-readable string */
+    QString formatTimeOffset(int64_t time_offset);
 
     QString formatNiceTimeOffset(qint64 secs);
 
@@ -221,9 +249,31 @@ namespace GUIUtil
 
     qreal calculateIdealFontSize(int width, const QString& text, QFont font, qreal minPointSize = 4, qreal startPointSize = 14);
 
-    class ClickableLabel : public QLabel
+    class ThemedLabel : public QLabel
     {
         Q_OBJECT
+
+    public:
+        explicit ThemedLabel(const PlatformStyle* platform_style, QWidget* parent = nullptr);
+        void setThemedPixmap(const QString& image_filename, int width, int height);
+
+    protected:
+        void changeEvent(QEvent* e) override;
+
+    private:
+        const PlatformStyle* m_platform_style;
+        QString m_image_filename;
+        int m_pixmap_width;
+        int m_pixmap_height;
+        void updateThemedPixmap();
+    };
+
+    class ClickableLabel : public ThemedLabel
+    {
+        Q_OBJECT
+
+    public:
+        explicit ClickableLabel(const PlatformStyle* platform_style, QWidget* parent = nullptr);
 
     Q_SIGNALS:
         /** Emitted when the label is clicked. The relative mouse coordinates of the click are
@@ -297,40 +347,6 @@ namespace GUIUtil
      * QPixmap* QLabel::pixmap() is deprecated since Qt 5.15.
      */
     bool HasPixmap(const QLabel* label);
-    QImage GetImage(const QLabel* label);
-
-    /**
-     * Splits the string into substrings wherever separator occurs, and returns
-     * the list of those strings. Empty strings do not appear in the result.
-     *
-     * QString::split() signature differs in different Qt versions:
-     *  - QString::SplitBehavior is deprecated since Qt 5.15
-     *  - Qt::SplitBehavior was introduced in Qt 5.14
-     * If {QString|Qt}::SkipEmptyParts behavior is required, use this
-     * function instead of QString::split().
-     */
-    template <typename SeparatorType>
-    QStringList SplitSkipEmptyParts(const QString& string, const SeparatorType& separator)
-    {
-    #if (QT_VERSION >= QT_VERSION_CHECK(5, 14, 0))
-        return string.split(separator, Qt::SkipEmptyParts);
-    #else
-        return string.split(separator, QString::SkipEmptyParts);
-    #endif
-    }
-
-    /**
-     * Queue a function to run in an object's event loop. This can be
-     * replaced by a call to the QMetaObject::invokeMethod functor overload after Qt 5.10, but
-     * for now use a QObject::connect for compatibility with older Qt versions, based on
-     * https://stackoverflow.com/questions/21646467/how-to-execute-a-functor-or-a-lambda-in-a-given-thread-in-qt-gcd-style
-     */
-    template <typename Fn>
-    void ObjectInvoke(QObject* object, Fn&& function, Qt::ConnectionType connection = Qt::QueuedConnection)
-    {
-        QObject source;
-        QObject::connect(&source, &QObject::destroyed, object, std::forward<Fn>(function), connection);
-    }
 
     /**
      * Replaces a plain text link with an HTML tagged one.
@@ -383,6 +399,23 @@ namespace GUIUtil
             },
             type);
     }
+
+    /**
+     * Shows a QDialog instance asynchronously, and deletes it on close.
+     */
+    void ShowModalDialogAsynchronously(QDialog* dialog);
+
+    inline bool IsEscapeOrBack(int key)
+    {
+        if (key == Qt::Key_Escape) return true;
+#ifdef Q_OS_ANDROID
+        if (key == Qt::Key_Back) return true;
+#endif // Q_OS_ANDROID
+        return false;
+    }
+
+    QString WalletDisplayName(const std::string& name);
+    QString WalletDisplayName(const QString& name);
 
 } // namespace GUIUtil
 

@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-# Copyright (c) 2020-2021 The Bitcoin Core developers
+# Copyright (c) 2020-2022 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test UTXO set hash value calculation in gettxoutsetinfo."""
 
-import struct
-
 from test_framework.messages import (
     CBlock,
     COutPoint,
-    FromHex,
+    from_hex,
 )
-from test_framework.muhash import MuHash3072
+from test_framework.crypto.muhash import MuHash3072
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal
 from test_framework.wallet import MiniWallet
@@ -31,14 +29,14 @@ class UTXOSetHashTest(BitcoinTestFramework):
 
         # Generate 100 blocks and remove the first since we plan to spend its
         # coinbase
-        block_hashes = wallet.generate(1) + node.generate(99)
-        blocks = list(map(lambda block: FromHex(CBlock(), node.getblock(block, False)), block_hashes))
+        block_hashes = self.generate(wallet, 1) + self.generate(node, 99)
+        blocks = list(map(lambda block: from_hex(CBlock(), node.getblock(block, False)), block_hashes))
         blocks.pop(0)
 
         # Create a spending transaction and mine a block which includes it
         txid = wallet.send_self_transfer(from_node=node)['txid']
-        tx_block = node.generateblock(output=wallet.get_address(), transactions=[txid])
-        blocks.append(FromHex(CBlock(), node.getblock(tx_block['hash'], False)))
+        tx_block = self.generateblock(node, output=wallet.get_address(), transactions=[txid])
+        blocks.append(from_hex(CBlock(), node.getblock(tx_block['hash'], False)))
 
         # Serialize the outputs that should be in the UTXO set and add them to
         # a MuHash object
@@ -57,8 +55,8 @@ class UTXOSetHashTest(BitcoinTestFramework):
                     if (coinbase and n > 0):
                         continue
 
-                    data = COutPoint(int(tx.rehash(), 16), n).serialize()
-                    data += struct.pack("<i", height * 2 + coinbase)
+                    data = COutPoint(tx.txid_int, n).serialize()
+                    data += (height * 2 + coinbase).to_bytes(4, "little")
                     data += tx_out.serialize()
 
                     muhash.insert(data)
@@ -69,12 +67,12 @@ class UTXOSetHashTest(BitcoinTestFramework):
         assert_equal(finalized[::-1].hex(), node_muhash)
 
         self.log.info("Test deterministic UTXO set hash results")
-        assert_equal(node.gettxoutsetinfo()['hash_serialized_2'], "5b1b44097406226c0eb8e1362cd17a1f346522cf9390a8175a57a5262cb1963f")
-        assert_equal(node.gettxoutsetinfo("muhash")['muhash'], "4b8803075d7151d06fad3e88b68ba726886794873fbfa841d12aefb2cc2b881b")
+        assert_equal(node.gettxoutsetinfo()['hash_serialized_3'], "e0b4c80f2880985fdf1adc331ed0735ac207588f986c91c7c05e8cf5fe6780f0")
+        assert_equal(node.gettxoutsetinfo("muhash")['muhash'], "8739b878f23030ef39a5547edc7b57f88d50fdaaf47314ff0524608deb13067e")
 
     def run_test(self):
         self.test_muhash_implementation()
 
 
 if __name__ == '__main__':
-    UTXOSetHashTest().main()
+    UTXOSetHashTest(__file__).main()

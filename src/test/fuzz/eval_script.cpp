@@ -1,4 +1,4 @@
-// Copyright (c) 2009-2020 The Bitcoin Core developers
+// Copyright (c) 2009-2021 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -9,15 +9,10 @@
 
 #include <limits>
 
-void initialize_eval_script()
-{
-    static const ECCVerifyHandle verify_handle;
-}
-
-FUZZ_TARGET_INIT(eval_script, initialize_eval_script)
+FUZZ_TARGET(eval_script)
 {
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
-    const unsigned int flags = fuzzed_data_provider.ConsumeIntegral<unsigned int>();
+    const auto flags = script_verify_flags::from_int(fuzzed_data_provider.ConsumeIntegral<script_verify_flags::value_type>());
     const std::vector<uint8_t> script_bytes = [&] {
         if (fuzzed_data_provider.remaining_bytes() != 0) {
             return fuzzed_data_provider.ConsumeRemainingBytes<uint8_t>();

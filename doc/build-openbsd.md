@@ -1,116 +1,117 @@
-OpenBSD build guide
-======================
-(updated for OpenBSD 6.7)
+# OpenBSD Build Guide
 
-This guide describes how to build bitcoind, bitcoin-qt, and command-line utilities on OpenBSD.
+**Updated for OpenBSD [7.6](https://www.openbsd.org/76.html)**
 
-Preparation
--------------
+This guide describes how to build bitcoind, command-line utilities, and GUI on OpenBSD.
 
-Run the following as root to install the base dependencies for building:
+## Preparation
+
+### 1. Install Required Dependencies
+Run the following as root to install the base dependencies for building.
 
 ```bash
-pkg_add git gmake libevent libtool boost
-pkg_add qt5 # (optional for enabling the GUI)
-pkg_add autoconf # (select highest version, e.g. 2.69)
-pkg_add automake # (select highest version, e.g. 1.16)
-pkg_add python # (select highest version, e.g. 3.8)
-pkg_add bash
-
-git clone https://github.com/bitcoin/bitcoin.git
+pkg_add git cmake boost libevent
 ```
+
+SQLite is required for the wallet:
+
+```bash
+pkg_add sqlite3
+```
+
+To build Bitcoin Core without the wallet, use `-DENABLE_WALLET=OFF`.
+
+Cap'n Proto is needed for IPC functionality (see [multiprocess.md](multiprocess.md))
+and can be built from source: https://capnproto.org/install.html
+
+Compile with `-DENABLE_IPC=OFF` if you do not need IPC functionality.
 
 See [dependencies.md](dependencies.md) for a complete overview.
 
-**Important**: From OpenBSD 6.2 onwards a C++11-supporting clang compiler is
-part of the base image, and while building it is necessary to make sure that
-this compiler is used and not ancient g++ 4.2.1. This is done by appending
-`CC=cc CC_FOR_BUILD=cc CXX=c++` to configuration commands. Mixing different
-compilers within the same executable will result in errors.
-
-### Building BerkeleyDB
-
-BerkeleyDB is only necessary for the wallet functionality. To skip this, pass
-`--disable-wallet` to `./configure` and skip to the next section.
-
-It is recommended to use Berkeley DB 4.8. You cannot use the BerkeleyDB library
-from ports, for the same reason as boost above (g++/libstd++ incompatibility).
-If you have to build it yourself, you can use [the installation script included
-in contrib/](/contrib/install_db4.sh) like so:
-
-```bash
-./contrib/install_db4.sh `pwd` CC=cc CXX=c++
+### 2. Clone Bitcoin Repo
+Clone the Bitcoin Core repository to a directory. All build scripts and commands will run from this directory.
+``` bash
+git clone https://github.com/bitcoin/bitcoin.git
 ```
 
-from the root of the repository. Then set `BDB_PREFIX` for the next section:
+### 3. Install Optional Dependencies
+
+#### GUI Dependencies
+###### Qt6
+
+Bitcoin Core includes a GUI built with the cross-platform Qt Framework. To compile the GUI, we need to install
+the necessary parts of Qt, the libqrencode and pass `-DBUILD_GUI=ON`. Skip if you don't intend to use the GUI.
 
 ```bash
-export BDB_PREFIX="$PWD/db4"
+pkg_add qt6-qtbase qt6-qttools
 ```
 
-### Building Bitcoin Core
+###### libqrencode
 
-**Important**: Use `gmake` (the non-GNU `make` will exit with an error).
+The GUI will be able to encode addresses in QR codes unless this feature is explicitly disabled. To install libqrencode, run:
 
-Preparation:
 ```bash
-
-# Replace this with the autoconf version that you installed. Include only
-# the major and minor parts of the version: use "2.69" for "autoconf-2.69p2".
-export AUTOCONF_VERSION=2.69
-
-# Replace this with the automake version that you installed. Include only
-# the major and minor parts of the version: use "1.16" for "automake-1.16.1".
-export AUTOMAKE_VERSION=1.16
-
-./autogen.sh
+pkg_add libqrencode
 ```
-Make sure `BDB_PREFIX` is set to the appropriate path from the above steps.
 
-To configure with wallet:
+Otherwise, if you don't need QR encoding support, use the `-DWITH_QRENCODE=OFF` option to disable this feature in order to compile the GUI.
+
+---
+
+#### Notifications
+###### ZeroMQ
+
+Bitcoin Core can provide notifications via ZeroMQ. If the package is installed, support will be compiled in.
 ```bash
-./configure --with-gui=no CC=cc CXX=c++ \
-    BDB_LIBS="-L${BDB_PREFIX}/lib -ldb_cxx-4.8" \
-    BDB_CFLAGS="-I${BDB_PREFIX}/include" \
-    MAKE=gmake
+pkg_add zeromq
 ```
 
-To configure without wallet:
+#### Test Suite Dependencies
+There is an included test suite that is useful for testing code changes when developing.
+To run the test suite (recommended), you will need to have Python 3 installed:
+
 ```bash
-./configure --disable-wallet --with-gui=no CC=cc CC_FOR_BUILD=cc CXX=c++ MAKE=gmake
+pkg_add python py3-zmq  # Select the newest version of the python package if necessary.
 ```
 
-To configure with GUI:
+## Building Bitcoin Core
+
+### 1. Configuration
+
+There are many ways to configure Bitcoin Core, here are a few common examples:
+
+##### Wallet and GUI:
+This enables wallet support and the GUI, assuming SQLite and Qt 6 are installed.
+
 ```bash
-./configure --with-gui=yes CC=cc CXX=c++ \
-    BDB_LIBS="-L${BDB_PREFIX}/lib -ldb_cxx-4.8" \
-    BDB_CFLAGS="-I${BDB_PREFIX}/include" \
-    MAKE=gmake
+cmake -B build -DBUILD_GUI=ON
 ```
 
-Build and run the tests:
+Run `cmake -B build -LH` to see the full list of available options.
+
+### 2. Compile
+
 ```bash
-gmake # use -jX here for parallelism
-gmake check
+cmake --build build     # Append "-j N" for N parallel jobs.
+ctest --test-dir build  # Append "-j N" for N parallel tests. Some tests are disabled if Python 3 is not available.
 ```
 
-Resource limits
--------------------
+## Resource limits
 
 If the build runs into out-of-memory errors, the instructions in this section
 might help.
 
 The standard ulimit restrictions in OpenBSD are very strict:
-
-    data(kbytes)         1572864
+```bash
+data(kbytes)         1572864
+```
 
 This is, unfortunately, in some cases not enough to compile some `.cpp` files in the project,
 (see issue [#6658](https://github.com/bitcoin/bitcoin/issues/6658)).
 If your user is in the `staff` group the limit can be raised with:
-
-    ulimit -d 3000000
-
+```bash
+ulimit -d 3000000
+```
 The change will only affect the current shell and processes spawned by it. To
 make the change system-wide, change `datasize-cur` and `datasize-max` in
 `/etc/login.conf`, and reboot.
-

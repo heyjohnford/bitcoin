@@ -3,32 +3,25 @@
 #
 # https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
 
-# race (TODO fix)
-race:LoadWallet
-race:WalletBatch::WriteHDChain
-race:BerkeleyBatch
-race:BerkeleyDatabase
-race:DatabaseBatch
-race:zmq::*
-race:bitcoin-qt
-
 # deadlock (TODO fix)
-deadlock:CChainState::ConnectTip
+# To reproduce, see:
+# https://github.com/bitcoin/bitcoin/issues/19303#issuecomment-1514926359
+deadlock:Chainstate::ConnectTip
 
 # Intentional deadlock in tests
 deadlock:sync_tests::potential_deadlock_detected
 
-# Wildcard for all gui tests, should be replaced with non-wildcard suppressions
+# Wildcard for all of the gui
+race:bitcoin-qt
 race:src/qt/test/*
 deadlock:src/qt/test/*
 
-# Race in src/test/main.cpp
-# Can be removed once upgraded to boost test 1.74 in depends
-race:validation_chainstatemanager_tests
-
 # External libraries
-deadlock:libdb
+# ------------------
 race:libzmq
+
+# To reproduce, build from depends with CFLAGS='-O0 -g' CXXFLAGS='-O0 -g'
+race:zmq::*
 
 # Intermittent issues
 # -------------------
@@ -39,5 +32,8 @@ race:libzmq
 # https://github.com/bitcoin/bitcoin/issues/20618
 race:CZMQAbstractPublishNotifier::SendZmqMessage
 
-# https://github.com/bitcoin/bitcoin/pull/20218, https://github.com/bitcoin/bitcoin/pull/20745
+# https://github.com/bitcoin/bitcoin/pull/27498#issuecomment-1517410478
 race:epoll_ctl
+
+# https://github.com/bitcoin/bitcoin/issues/23366
+race:std::__1::ios_base::*

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2017-2020 The Bitcoin Core developers
+# Copyright (c) 2017-2022 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test wallet load on startup.
@@ -16,7 +16,6 @@ class WalletStartupTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 1
-        self.supports_cli = True
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -55,4 +54,4 @@ class WalletStartupTest(BitcoinTestFramework):
         assert_equal(set(self.nodes[0].listwallets()), set(('w2', 'w3')))
 
 if __name__ == '__main__':
-    WalletStartupTest().main()
+    WalletStartupTest(__file__).main()

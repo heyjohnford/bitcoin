@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2020 The Bitcoin Core developers
+// Copyright (c) 2011-2021 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -15,20 +15,18 @@
 #include <QMouseEvent>
 #include <QPainter>
 
-#if defined(HAVE_CONFIG_H)
-#include <config/bitcoin-config.h> /* for USE_QRCODE */
-#endif
+#include <bitcoin-build-config.h> // IWYU pragma: keep
 
 #ifdef USE_QRCODE
 #include <qrencode.h>
 #endif
 
-QRImageWidget::QRImageWidget(QWidget *parent):
-    QLabel(parent), contextMenu(nullptr)
+QRImageWidget::QRImageWidget(QWidget* parent)
+    : QLabel(parent)
 {
     contextMenu = new QMenu(this);
-    contextMenu->addAction(tr("Save Image..."), this, &QRImageWidget::saveImage);
-    contextMenu->addAction(tr("Copy Image"), this, &QRImageWidget::copyImage);
+    contextMenu->addAction(tr("&Save Image…"), this, &QRImageWidget::saveImage);
+    contextMenu->addAction(tr("&Copy Image"), this, &QRImageWidget::copyImage);
 }
 
 bool QRImageWidget::setQR(const QString& data, const QString& text)
@@ -94,7 +92,11 @@ bool QRImageWidget::setQR(const QString& data, const QString& text)
 
 QImage QRImageWidget::exportImage()
 {
-    return GUIUtil::GetImage(this);
+    if (!GUIUtil::HasPixmap(this)) {
+        return QImage();
+    }
+
+    return this->pixmap(Qt::ReturnByValue).toImage();
 }
 
 void QRImageWidget::mousePressEvent(QMouseEvent *event)
@@ -118,7 +120,9 @@ void QRImageWidget::saveImage()
         return;
     QString fn = GUIUtil::getSaveFileName(
         this, tr("Save QR Code"), QString(),
-        tr("PNG Image", "Name of PNG file format") + QLatin1String(" (*.png)"), nullptr);
+        /*: Expanded name of the PNG file format.
+            See: https://en.wikipedia.org/wiki/Portable_Network_Graphics. */
+        tr("PNG Image") + QLatin1String(" (*.png)"), nullptr);
     if (!fn.isEmpty())
     {
         exportImage().save(fn);

@@ -1,16 +1,17 @@
-// Copyright (c) 2011-2020 The Bitcoin Core developers
+// Copyright (c) 2011-2022 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <test/util/setup_common.h>
 #include <util/strencodings.h>
 
 #include <boost/test/unit_test.hpp>
+
+#include <algorithm>
 #include <string>
 
 using namespace std::literals;
 
-BOOST_FIXTURE_TEST_SUITE(base64_tests, BasicTestingSetup)
+BOOST_AUTO_TEST_SUITE(base64_tests)
 
 BOOST_AUTO_TEST_CASE(base64_testvectors)
 {
@@ -20,20 +21,39 @@ BOOST_AUTO_TEST_CASE(base64_testvectors)
     {
         std::string strEnc = EncodeBase64(vstrIn[i]);
         BOOST_CHECK_EQUAL(strEnc, vstrOut[i]);
-        std::string strDec = DecodeBase64(strEnc);
-        BOOST_CHECK_EQUAL(strDec, vstrIn[i]);
+        auto dec = DecodeBase64(strEnc);
+        BOOST_REQUIRE(dec);
+        BOOST_CHECK_MESSAGE(std::ranges::equal(*dec, vstrIn[i]), vstrOut[i]);
     }
 
+    {
+        const std::vector<uint8_t> in_u{0xff, 0x01, 0xff};
+        const std::vector<std::byte> in_b{std::byte{0xff}, std::byte{0x01}, std::byte{0xff}};
+        const std::string in_s{"\xff\x01\xff"};
+        const std::string out_exp{"/wH/"};
+        BOOST_CHECK_EQUAL(EncodeBase64(in_u), out_exp);
+        BOOST_CHECK_EQUAL(EncodeBase64(in_b), out_exp);
+        BOOST_CHECK_EQUAL(EncodeBase64(in_s), out_exp);
+    }
+
+    BOOST_CHECK(DecodeBase64("nQB/pZw=")); // valid
+
     // Decoding strings with embedded NUL characters should fail
-    bool failure;
-    (void)DecodeBase64("invalid\0"s, &failure);
-    BOOST_CHECK(failure);
-    (void)DecodeBase64("nQB/pZw="s, &failure);
-    BOOST_CHECK(!failure);
-    (void)DecodeBase64("nQB/pZw=\0invalid"s, &failure);
-    BOOST_CHECK(failure);
-    (void)DecodeBase64("nQB/pZw=invalid\0"s, &failure);
-    BOOST_CHECK(failure);
+    BOOST_CHECK(!DecodeBase64("invalid\0"sv)); // correct size, invalid due to \0
+    BOOST_CHECK(!DecodeBase64("nQB/pZw=\0invalid"sv));
+    BOOST_CHECK(!DecodeBase64("nQB/pZw=invalid\0"sv)); // invalid, padding only allowed at the end
+}
+
+BOOST_AUTO_TEST_CASE(base64_padding)
+{
+    // Is valid without padding
+    BOOST_CHECK_EQUAL(EncodeBase64("foobar"), "Zm9vYmFy");
+
+    // Valid size
+    BOOST_CHECK(!DecodeBase64("===="));
+    BOOST_CHECK(!DecodeBase64("a==="));
+    BOOST_CHECK( DecodeBase64("YQ=="));
+    BOOST_CHECK( DecodeBase64("YWE="));
 }
 
 BOOST_AUTO_TEST_SUITE_END()
